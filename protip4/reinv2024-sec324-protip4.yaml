@@ -1,0 +1,433 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::SecretsManager-2024-09-16
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - E3001 # Secrets Manager resources should not have a name
+        - E3002 # Secrets Manager resources should not have a rotation schedule
+Description:  >
+  re:Invent2024 - Code Talk - SEC324 - ProTip#4
+
+  Sample CloudFormation template to set up the prerequisites for your AWS account : 
+  new VPC, private subnets for Lambda function and RDS database. VPC Endpoints are
+  ceaated for RDS database and Secrets Manager.
+  
+
+Parameters:
+  VpcCIDR:
+    Type: String
+    Default: '10.20.30.40/24'
+  SubnetACIDR:
+    Type: String
+    Default: '10.20.30.40/26'
+  SubnetBCIDR:
+    Type: String
+    Default: '10.20.30.64/26'
+  ParamDBName:
+    Type: String
+    Default: 'ChristmasCampain'
+  DBInstanceClass:
+    Type: String
+    Default: 'db.t3.micro'
+  DBUsername:
+    NoEcho: 'true'
+    Description: Username for MySQL database access
+    Type: String
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPort:
+    Type: Number
+    Description: 'Database port'
+    Default: 3306
+  DBUserA:
+    Type: String
+    Description: 'Database username for app'
+    Default: 'DBUserA-test'
+  DBUserB:
+    Type: String
+    Description: 'Database username for app'
+    Default: 'DBUserB-test'
+  ParamLambdaLayerMySQL:
+    Type: String
+    Default: 'PyMySQL-Layer:1'
+    Description : 'Lambda Layer for PyMySQL'
+
+Resources:
+  # VPC and Network Configuration
+  RssVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub VPC-${AWS::StackName}
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref RssVPC
+      CidrBlock: !Ref SubnetACIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Private Subnet A
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref RssVPC
+      CidrBlock: !Ref SubnetBCIDR
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Private Subnet B
+
+  # VPC Endpoints
+  RDSVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      VpcId: !Ref RssVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.rds'
+      VpcEndpointType: Interface
+      SubnetIds: 
+        - !Ref SubnetB
+        - !Ref SubnetA
+      SecurityGroupIds: 
+        - !Ref EndpointSecurityGroup
+
+  # VPC Endpoints
+  SecretsVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref RssVPC
+      PrivateDnsEnabled: true
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      VpcEndpointType: Interface
+      SubnetIds: 
+        - !Ref SubnetB
+        - !Ref SubnetA
+      SecurityGroupIds: 
+        - !Ref EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - secretsmanager:Get*
+              - secretsmanager:DescribeSecret
+              - secretsmanager:ListSecret*
+              - secretsmanager:PutSecretValue
+              - secretsmanager:UpdateSecretVersionStage
+            Resource: '*'
+
+  # Security Groups
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS
+      VpcId: !Ref RssVPC
+
+  RDSSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DBPort
+      ToPort: !Ref DBPort
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Description: Allow Lambda access to RDS
+
+  RDSSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description : "SG Outbound - RDS - Limits non-stateful egress traffic to the loopback port"
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: "-1"
+      CidrIp: 127.0.0.1/32
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda
+      VpcId: !Ref RssVPC
+
+  LambdaSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DBPort
+      ToPort: !Ref DBPort
+      DestinationSecurityGroupId: !Ref RDSSecurityGroup
+      Description: Allow Lambda to access RDS
+
+  LambdaSecurityGroupEgresstoEndPoint:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationSecurityGroupId: !Ref EndpointSecurityGroup
+      Description: Allow Lambda to access VPC endpoints
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC Endpoint
+      VpcId: !Ref RssVPC
+
+  EndpointSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EndpointSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Description: Allow Lambda access to VPC Endpoints
+  EndpointSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description : "SG Outbound - VPCe - Limits non-stateful egress traffic from the instance to the loopback port"
+      GroupId: !Ref EndpointSecurityGroup
+      IpProtocol: "-1"
+      CidrIp: 127.0.0.1/32
+
+  DBUserASecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub '${AWS::StackName}-${DBUserA}'
+      Description: !Sub 'Secret for MySQL database reader user: ${DBUserA}'
+      KmsKeyId: alias/aws/secretsmanager
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "${AWS::StackName}-${DBUserA}"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\\'
+
+  DBUserBSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub '${AWS::StackName}-${DBUserB}'
+      Description: !Sub 'Secret for MySQL database reader user: ${DBUserA}'
+      KmsKeyId: alias/aws/secretsmanager
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "${AWS::StackName}-${DBUserB}}"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\\'
+
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref SubnetA
+        - !Ref SubnetB
+
+  # RDS Instance
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W75
+            reason: 'RDS instance is for demo purpose only. No backup retention period is needed'
+          - id: F80
+            reason: 'RDS instance is for demo purpose only. No deletion protection is needed'
+          - id: W28
+            reason: 'RDS instance is for demo purpose only. The name will vary with the Stack name'
+    Properties:
+      DBInstanceIdentifier: !Sub '${AWS::StackName}-${ParamDBName}'
+      Engine: mysql
+      EngineVersion: "8.0.33"
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 8
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      ManageMasterUserPassword: true
+      MasterUsername: !Ref DBUsername
+      BackupRetentionPeriod: 0
+      StorageEncrypted: true
+      DeletionProtection: false
+      EnableIAMDatabaseAuthentication: true
+      Tags:
+        - Key: Name
+          Value: 'RDS instance for our application'
+
+  # Lambda Role
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: 
+                  - !GetAtt RDSInstance.MasterUserSecret.SecretArn
+                  - !GetAtt DBUserASecret.Id
+                  - !GetAtt DBUserBSecret.Id
+
+  # Lambda Function
+  DBInitFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import string
+          import secrets
+          import boto3
+          import logging
+          import datetime
+          import os
+          import pymysql
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              # Get RDS credentials from Secrets Manager
+              secret_name = os.environ['MASTERDB_ARN']
+              user1_secret = os.environ['USER1_PWD_ARN']
+
+              session = boto3.session.Session()
+              secrets_manager = session.client('secretsmanager')
+
+              master_creds = json.loads(secrets_manager.get_secret_value(SecretId=secret_name)['SecretString'])
+              user1_creds = json.loads(secrets_manager.get_secret_value(SecretId=user1_secret)['SecretString'])
+
+              # Connect to RDS
+              conn = pymysql.connect(
+                  host=os.environ['DB_HOST'],
+                  user=master_creds['username'],
+                  password=master_creds['password']
+              )
+              
+              cursor = conn.cursor()
+              
+              # Create database
+              cursor.execute("CREATE DATABASE IF NOT EXISTS os.environ['DB_NAME']")
+              cursor.execute("USE os.environ['DB_NAME']")
+
+              # Create users
+              username = user1_creds['username']
+              password = user1_creds['password']
+
+
+              cursor.execute(f"CREATE USER IF NOT EXISTS '{username}'@'%'  IDENTIFIED BY '{password}'")
+              
+              conn.commit()
+              cursor.close()
+              conn.close()
+              logger.info(f"Database setup completed successfully - no longer using master user")
+
+              # Connect to RDS
+              conn_user = pymysql.connect(
+                  host=os.environ['DB_HOST'],
+                  user=user_creds['username'],
+                  password=user_creds['password']
+              )
+
+              cursor_user = conn_user.cursor()
+
+              logger.info(f"Now let's try to connect with our fresh DB user: {username}")
+
+              # Query to get the current date and time
+              cursor_user.execute("SELECT CURRENT_TIMESTAMP;")
+              current_time = cursor_user.fetchone()
+              logger.info(f"Current time in database: {current_time[0]}")
+
+              # Query to get the current user
+              cursor_user.execute("SELECT USER();")
+              current_user = cursor_user.fetchone()
+              logger.info(f"Current user in database: {current_user[0]}")
+
+              cursor_user.close()
+              conn_user.close()
+              
+              return {
+                  'statusCode': 200,
+                  'body': 'Database setup completed successfully'
+              }
+      Runtime: python3.12
+      Timeout: 300
+      MemorySize: 256
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref SubnetB
+      Environment:
+        Variables:
+          MASTERDB_ARN: !GetAtt RDSInstance.MasterUserSecret.SecretArn
+          USER1_PWD_ARN: !GetAtt DBUserASecret.Id
+          DB_HOST: !GetAtt RDSInstance.Endpoint.Address
+          DB_NAME: !GetAtt RDSInstance.DBInstanceIdentifier
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${ParamLambdaLayerMySQL}"
+      
+
+  # Secret Target Attachment
+  SecretTargetAttachment:
+    DependsOn: 
+      - RDSInstance
+      - DBInitFunction
+      - DBUserASecret
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !GetAtt DBUserASecret.Id
+      TargetId: !Ref RDSInstance
+      TargetType: AWS::RDS::DBInstance
+
+ # Rotation Schedule
+  SecretRotationSchedule:
+    Type: AWS::SecretsManager::RotationSchedule
+    DependsOn: SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DBUserASecret
+      HostedRotationLambda:
+        RotationType: MySQLSingleUser
+        RotationLambdaName: !Sub '${AWS::StackName}-${AWS::Region}-rotation-function'
+        VpcSecurityGroupIds: !Join 
+          - ","
+          - - !Ref LambdaSecurityGroup
+        VpcSubnetIds: !Join
+          - ","
+          - - Ref: SubnetB
+      RotationRules:
+        Duration: 2h
+        ScheduleExpression: 'rate(4 hour)'
+
+Outputs:
+  RDSEndpoint:
+    Description: RDS Instance Endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  SecretARN:
+    Description: Secret ARN for RDS credentials
+    Value: !GetAtt RDSInstance.MasterUserSecret.SecretArn

@@ -1,0 +1,233 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion : "2010-09-09"
+Description: >
+  re:Invent2024 - Code Talk - SEC324
+  Pro Tip#2:  Access control - Role Based Access Control(RBAC) - Resource-based policy - 
+  Attribute Based Access Control (ABAC). Call out to RCP that are recently released.
+  This code will show how to create two secrets and control access to them
+  based RBAC, resource-based policy and ABAC.
+   - To demontraste RBAC: an IAM role IAMRoleListSecrets will be created allowing to list secrets
+    but not to get their values
+   - To demonstrate ABAC: an IAM role IAMRoleTestABAC will be created. It won't be able to describe
+    SecretProTip2B, but it will be able to describe SecretProTip2C because of the tags
+   - To demonstrate resource-based policy: SecretProTip2C will be created with a resource-based policy
+    preventing IAMRoleTestABAC from removing the tag
+
+# Parameters used for this template
+Parameters:
+  ParamProjectName:
+    Type: String
+    Default: "r24-sec324-protip2"
+  ParamPrefix:
+    Type: String
+    Default: "SEC324-ProTip2-"
+  ParamPasswordLength:
+    Type: Number
+    Description: "The minimum length for the password"
+    Default: 12
+  ParamUsername:
+    Type: String
+    Default: "r24-sec324-protip2-username"
+  ParamExcludeCharacters:
+    Type: String
+    Default: '\"@\\ '
+
+# Resources to be created
+Resources:
+# Creation of the first secret with no resource-based policy and a KMS CMK key 
+# None of the two roles created in this stack should be able to read the secrets, but they should list it
+  SecretProTip2B:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub ${ParamPrefix}SecretB
+      Description: !Sub "This secret has a dynamically generated password of ${ParamPasswordLength} to store API key."
+      KmsKeyId: alias/aws/secretsmanager
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username":"${ParamUsername}-B"}'
+        GenerateStringKey: "password"
+        PasswordLength: !Ref ParamPasswordLength
+        ExcludeCharacters: !Ref ParamExcludeCharacters
+      Tags:
+        - Key: ProjectName
+          Value: "Different Project - to get deny from ABAC"
+        - Key: Purpose
+          Value: "Demo RBAC and ABAC"
+
+# Creation of the second secret with a resource-based policy allowing to fetch the secret
+# Any role with the right permission should be able to do this, like ${IAMRoleTestABAC}
+  SecretProTip2C:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub ${ParamPrefix}SecretC
+      Description: !Sub "This secret has a dynamically generated password."
+      KmsKeyId: alias/aws/secretsmanager
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username":"${ParamUsername}-C"}'
+        GenerateStringKey: "password"
+        PasswordLength: !Ref ParamPasswordLength
+        ExcludeCharacters: !Ref ParamExcludeCharacters
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ParamProjectName
+        - Key: Purpose
+          Value: "Demo ABAC"
+  SecretProTip2CResourcePolicy:
+    Type: AWS::SecretsManager::ResourcePolicy
+    Properties:
+      SecretId:
+        Ref: SecretProTip2C
+      BlockPublicPolicy: True
+      ResourcePolicy:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: AllowABAC
+          Resource: "*"
+          Action: 
+            - secretsmanager:GetSecretValue
+            - secretsmanager:DescribeSecret
+            - secretsmanager:ListSecret*
+          Effect: Allow
+          Principal:
+            AWS:
+              !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMRoleTestABAC}"
+        - Sid: ProtectTagsForABAC
+          Resource: "*"
+          Action: 
+            - secretsmanager:UntagResource
+            - secretsmanager:TagResource
+          Effect: Deny
+          Principal:
+            AWS:
+              !Sub "arn:aws:iam::${AWS::AccountId}:role/${IAMRoleTestABAC}"
+
+
+# IAM role to create to demo ABAC to show that only secrets with the same tag ProjectName value
+# By default, once you assume this role, you should be able to list all the secrets
+# but describe secrets will only work with the secrets having the same tag. 
+# But because of the resource-based policy denying it on secret, this role won't be able to alter the tags
+  IAMRoleTestABAC:
+    Type: "AWS::IAM::Role"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: 'Allow CloudShell resources and any secrets. To be more restrictive for a production environment'
+          - id: W28
+            reason: 'This role name varies with the Stackname'
+    Properties:     
+      RoleName: !Sub ${AWS::StackName}-IAMRoleDemoABAC
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 
+                !Sub arn:aws:iam::${AWS::AccountId}:role/Admin
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: AllowAccessSecretsABAC
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+            - Sid: "AllowManageSecretsTags"
+              Effect: Deny
+              Action: 
+                - secretsmanager:GetSecretValue
+                - secretsmanager:DescribeSecret
+                - secretsmanager:DeleteSecret
+                - secretsmanager:PutSecretValue
+                - secretsmanager:UpdateSecret
+                - secretsmanager:TagResource
+                - secretsmanager:UntagResource
+                - secretsmanager:GetResourcePolicy
+              Resource: 
+                - !Ref SecretProTip2B
+                - !Ref SecretProTip2C
+              Condition:
+                StringNotEquals:
+                  "aws:ResourceTag/ProjectName": "${aws:PrincipalTag/ProjectName}"
+            - Sid: "ListAllSecrets"
+              Effect: Allow
+              Action: 
+                - secretsmanager:ListSecret*
+              Resource: "*"
+            - Sid: "AllowUseCloudShell"
+              Effect: Allow              
+              Action: 
+                - cloudshell:CreateEnvironment
+                - cloudshell:GetEnvironment*
+                - cloudshell:CreateSession
+                - cloudshell:StartEnvironment
+                - cloudshell:PutCredentials
+              Resource: "*"
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ParamProjectName
+
+# Role to show that this IAM role can describe/list the secrets but NOT get secret value
+  IAMRoleListSecrets:
+    Type: "AWS::IAM::Role"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: 'Allow CloudShell resources and any secrets. To be more restrictive for a production environment'
+          - id: W28
+            reason: 'This role name varies with the Stackname'
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-IAMRoleDemoRBAC
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 
+                !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: AllowListSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+            - Sid : "AllowDescribeSecrets"
+              Effect: Allow
+              Action: 
+                - secretsmanager:DescribeSecret
+                - secretsmanager:GetResourcePolicy
+              Resource: "*"
+            - Sid: "ListAllSecrets"
+              Effect: Allow
+              Action: 
+                - secretsmanager:ListSecret*
+              Resource: "*"
+            - Sid: "AllowUseCloudShell"
+              Effect: Allow              
+              Action: 
+                - cloudshell:CreateEnvironment
+                - cloudshell:GetEnvironment*
+                - cloudshell:CreateSession
+                - cloudshell:StartEnvironment
+                - cloudshell:PutCredentials
+              Resource: "*"
+      Tags:
+        -
+          Key: Purpose
+          Value: 'Demo RBAC to describe secrets'
+        - 
+          Key: ProjectName
+          Value: !Ref ParamProjectName
+
+# Outputs
+Outputs:
+  OutStackName:
+    Description: "Stack name."
+    Value: !Sub "${AWS::StackName}"
+  SecretProTip6B:
+    Value:
+      Fn::GetAtt: SecretProTip2B.Id
+  SecretProTip6C:
+    Value:
+      Fn::GetAtt: SecretProTip2C.Id

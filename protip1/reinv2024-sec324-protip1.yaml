@@ -1,0 +1,114 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion : "2010-09-09"
+Description: >
+  re:Invent2024 - Code Talk - SEC324
+  Pro Tip#1:  Encryption at rest
+  This code will show how to create two secrets with randomly generated secrets value
+  and encrypted them at rest using either AWS managed key KMS or customer managed key (CMK).
+
+# Parameters used for this template
+Parameters:
+  ParamProjectName:
+    Type: String
+    Default: "r24-sec324-protip1"
+  ParamPasswordLength:
+    Type: Number
+    Description: "The minimum length for the password"
+    Default: 25
+  ParamExcludeCharacters:
+    Type: String
+    Default: '\"@\\ '
+
+# Resources to be created
+Resources:
+# Creation of the first secret encrypted with KMS Customer Managed Key (CMK)
+  SecretProTip1B:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub "${AWS::StackName}-SecretB"
+      Description: !Sub "${AWS::StackName} - This secret has a dynamically generated password of ${ParamPasswordLength} and will be use for API key."
+      KmsKeyId: !Ref SecretKeyAlias
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username":"${AWS::StackName}-APIkey"}'
+        GenerateStringKey: "password"
+        PasswordLength: !Ref ParamPasswordLength
+        ExcludeCharacters: !Ref ParamExcludeCharacters
+
+# Creation of the second secret with KMS AWS managed keys alias/aws/secretsmanager
+  SecretProTip1C:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub "${AWS::StackName}-SecretC"
+      Description: !Sub "${AWS::StackName} - This secret has a dynamically generated password of ${ParamPasswordLength} use for DB user."
+      KmsKeyId: alias/aws/secretsmanager
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username":"${AWS::StackName}-DBUser"}'
+        GenerateStringKey: "password"
+        PasswordLength: !Ref ParamPasswordLength
+        ExcludeCharacters: !Ref ParamExcludeCharacters
+
+# Create a KMS key to encrypt Secret
+  SecretCMKKMSKey:
+    Type: 'AWS::KMS::Key'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F76
+            reason: 'There are conditions to restrict the principal who can use the key'
+    Properties:
+      Description: KMS Customer Managed Key to encrypt secret at rest
+      EnableKeyRotation: True
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: !Sub ${AWS::StackName}_CMK_ID
+        Statement:
+          - Sid: "Allow administration of the key"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/Admin'
+            Action:
+              - "kms:*"
+            Resource: "*"
+          - Sid: "Allow use of the key through AWS Secrets Manager"
+            Effect: "Allow"
+            Principal:
+              AWS: '*'
+            Action:
+            - 'kms:GenerateDataKey*'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'kms:CallerAccount': !Sub ${AWS::AccountId}
+              StringLike:
+                'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+          - Sid: "Allow access to key metadata inside the account"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action:
+              - 'kms:Describe*'
+              - 'kms:Get*'
+              - 'kms:List*'
+              - 'kms:RevokeGrant'
+            Resource: '*'
+
+  SecretKeyAlias:
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: !Sub alias/${AWS::StackName}-Alias-secret
+      TargetKeyId: !Ref SecretCMKKMSKey
+
+# Outputs
+Outputs:
+  OutStackName:
+    Description: "Stack name."
+    Value: !Sub "${AWS::StackName}"
+  SecretProTip6A:
+    Value:
+      Fn::GetAtt: SecretProTip1C.Id
+  SecretProTip6B:
+    Value:
+      Fn::GetAtt: SecretProTip1B.Id

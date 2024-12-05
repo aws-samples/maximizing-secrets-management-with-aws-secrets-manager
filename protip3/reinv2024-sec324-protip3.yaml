@@ -1,0 +1,453 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion : "2010-09-09"
+Description: >
+  re:Invent2024 - Code Talk - SEC324 - ProTip#3
+
+  Sample CloudFormation template to set up the prerequisites for your AWS account : 
+  new VPC, public subnets, SGs
+  NAT GW and internet GW to allow to download packages for Secrets Manager agent
+  AWS EC2 instance with access via AWS Systems Manager Session Manager.
+
+Parameters:
+  ParamProjectName:
+    Type: String
+    Default: "reinv2024-sec324-protip3"
+  ParamVPCCidr:
+    Description: Main VPC CIDR Block
+    Type: String
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    Default: 10.20.40.0/24
+  ParamRssEC2SubnetACidr:
+    Description: Priv Subnet A CIDR Block
+    Type: String
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    Default: 10.20.40.0/26
+  ParamSubnetBCidr:
+    Description: Priv Subnet B CIDR Block
+    Type: String
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    Default: 10.20.40.64/26
+  ParamSubnetCCidr:
+    Description: Pub Subnet C CIDR Block
+    Type: String
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    Default: 10.20.40.128/26
+  ParamLatestAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+  DBPort:
+    Type: Number
+    Description: 'Database port'
+    Default: 3306
+  ParamDBName:
+    Type: String
+    Default: 'ChristmasCampain'
+    Description: 'Database name'
+  DBInstanceClass:
+    Type: String
+    Default: 'db.t3.micro'
+  DBUsername:
+    NoEcho: 'true'
+    Description: Username for MySQL database access
+    Type: String
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+    
+Resources:
+  #Deploy the EC2 instance, attach an Instance Profile that allows the EC2 instance to call SSM
+  RssSSMRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: 'The IAM role name will vary with the Stack name'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+            Condition:
+              StringEquals:
+                  "aws:SourceAccount": !Sub ${AWS::AccountId}
+      Path: /
+      RoleName: !Sub ${AWS::StackName}-EC2SSMRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::${AWS::Partition}:policy/AmazonSSMManagedInstanceCore
+  
+  InstanceRolePolicies:
+    Type: AWS::IAM::Policy
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W12
+            reason: 'Allowing to list secrets, and get secrets'
+    Properties:
+      PolicyName: EC2InstancePolicy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - secretsmanager:Describe*
+              - secretsmanager:List*
+              - secretsmanager:GetSecretValue
+              - secretsmanager:BatchGetSecretValue
+            Resource: '*'
+          - Effect: Allow
+            Action: 
+              - rds-db:connect
+            Resource: '*'
+      Roles:
+        - !Ref 'RssSSMRole'
+      
+#EC2 instance to allow management by SSM Session Manager
+  RssSSMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${AWS::StackName}-SSMInstanceProfile
+      Path : /
+      Roles: [!Ref RssSSMRole]
+
+#EC2 instance for management : secrets manager agent + access to DB
+  RssEC2Instance1:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: !Ref ParamLatestAmiId
+      InstanceType: t2.micro
+      SecurityGroupIds:
+        - !Ref ComputeSecurityGroup
+      SubnetId: !Ref RssEC2SubnetA
+      IamInstanceProfile: !Ref RssSSMInstanceProfile
+      Tags:
+      - Key: RemoteAccess
+        Value: "SSM Session is your friend NO NEED for SSH ;-)"
+      - Key: Name
+        Value: !Sub CF-Linux-PrivA-#1-${AWS::StackName}
+      - Key: Role
+        Value: "EC2 with Linux AMI for Secrets Manager Agent to simulate Hybrid"
+      UserData:
+        Fn::Base64: 
+          !Sub |
+          #!/bin/bash
+          yum update -y aws-cfn-bootstrap
+          yum install -y jq
+          yum install -y git
+          yum install -y aws-cfn-bootstrap
+          yum install -y mariadb
+          date
+          
+#Create the VPC which will host our EC2 instances
+  RssMainVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref ParamVPCCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: WhatFor
+        Value: !Sub "RssMainVPC to try out - ${ParamProjectName}"
+      - Key: Name
+        Value: !Sub RssMainVPC - ${ParamProjectName}
+
+  
+#Let's enable Flow logs on that VPC
+  RssVPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt RssFlowLogRole.Arn
+      LogGroupName: !Ref RssFlowLogsGroup
+      ResourceId: !Ref RssMainVPC
+      ResourceType: VPC
+      TrafficType: ALL
+      Tags:
+      - Key: Name
+        Value: !Sub RssVPCFlowLog - ${ParamProjectName}
+
+#Our FlowLog needs a role to send logs to CloudWatch
+  RssFlowLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - "vpc-flow-logs.amazonaws.com"
+          Action: "sts:AssumeRole"
+          Condition:
+            StringEquals:
+                "aws:SourceAccount": !Sub ${AWS::AccountId}
+      Policies:
+      - PolicyName: "flowlogs-policy"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - "logs:CreateLogGroup"
+            - "logs:CreateLogStream"
+            - "logs:PutLogEvents"
+            - "logs:DescribeLogGroups"
+            - "logs:DescribeLogStreams"
+            Resource: !GetAtt "RssFlowLogsGroup.Arn"
+            
+#And now for the VPC FlowLog CloudWatch LogGroup
+  RssFlowLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: 'CloudWatch LogGroup is encrypted at rest by default, as it contains log data'
+    Properties:
+      LogGroupName : !Sub ${AWS::StackName}-VPCFlowLogs
+      RetentionInDays: 3
+
+#Deploy Private subnet A in AZ a
+  RssEC2SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref RssMainVPC
+      CidrBlock: !Ref ParamRssEC2SubnetACidr
+      AvailabilityZone: !Select [ 0, !GetAZs ]  # Get the first AZ in the list
+      Tags:
+      - Key: Project
+        Value: !Ref ParamProjectName
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-PrivSubnet-A
+  
+#Deploy Private subnet B in AZ b
+  RssEC2SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref RssMainVPC
+      CidrBlock: !Ref ParamSubnetBCidr
+      AvailabilityZone: !Select [ 1, !GetAZs ]  # Get the 2ND AZ in the list
+      Tags:
+      - Key: Project
+        Value: !Ref ParamProjectName
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-PrivSubnet-B
+
+#Deploy Public Subnet C in AZ a
+  RssEC2SubnetC:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W33
+            reason: 'This is a public subnet that will host the NAT Gateway so public access is needed'
+    Properties:
+      VpcId: !Ref RssMainVPC
+      CidrBlock: !Ref ParamSubnetCCidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs ]  # Get the first AZ in the list
+      Tags:
+      - Key: Project
+        Value: !Ref ParamProjectName
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-PubSubnet-C
+
+# Create an internet GW
+  RssInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub "IGW - ${AWS::StackName}"
+
+# Attach the IGW to the VPC
+  RssVpcIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref RssMainVPC
+      InternetGatewayId: !Ref RssInternetGateway
+
+
+# create route table for public subnets
+  RssPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref RssMainVPC
+      Tags:
+      - Key: Name
+        Value: "Public Route Table"
+      - Key: Project
+        Value: !Ref ParamProjectName
+
+# create public route for IGW
+  RssPublicIGWRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RssPublicRouteTable
+      GatewayId: !Ref RssInternetGateway
+      DestinationCidrBlock: 0.0.0.0/0
+
+# create public subnet route associations for SubnetC
+  RssPublicSubnetRouteTableAssociationC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RssPublicRouteTable
+      SubnetId: !Ref RssEC2SubnetC
+
+# create a NAT Gateway for public subnets 
+  RssNatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt RssNatGatewayEIP.AllocationId
+      SubnetId: !Ref RssEC2SubnetC
+
+# create an Elastic IP for the NAT Gateway
+  RssNatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+# create route table for private subnets
+  RssPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref RssMainVPC
+      Tags:
+      - Key: Name
+        Value: "Private Route Table"
+      - Key: Project
+        Value: !Ref ParamProjectName  
+
+# create private route for NAT Gateway
+  RssPrivateNatGatewayRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RssPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref RssNatGateway
+
+# create private route table associations
+  RssPrivateSubnetRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RssPrivateRouteTable
+      SubnetId: !Ref RssEC2SubnetA
+
+
+#Deploy the Security Group for the private EC2
+  ComputeSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      VpcId: !Ref RssMainVPC
+      GroupDescription: Private EC2 Security Group
+      Tags:
+        - Key: Name
+          Value: "Private EC2 Security Group"
+  #Ingress rule allowing traffic from the EC2 
+  ComputeSecurityGrouppEgressHTTPS:
+    Type : AWS::EC2::SecurityGroupEgress
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W5
+            reason: 'This security group will be attached to private compute'
+    Properties:
+      Description : "SG Outbound EC2 - HTTPS"
+      GroupId: !Ref ComputeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+  ComputeSecurityGroupEgressRDS:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ComputeSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DBPort
+      ToPort: !Ref DBPort
+      DestinationSecurityGroupId: !Ref RDSSecurityGroup
+      Description: Allow Lambda to access RDS
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS
+      VpcId: !Ref RssMainVPC
+
+  RDSSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DBPort
+      ToPort: !Ref DBPort
+      SourceSecurityGroupId: !Ref ComputeSecurityGroup
+      Description: Allow Compute access to RDS
+  RDSSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description : "SG Outbound - RDS - Limits non-stateful egress traffic to the loopback port"
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: "-1"
+      CidrIp: 127.0.0.1/32
+
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref RssEC2SubnetA
+        - !Ref RssEC2SubnetB
+
+  # RDS Instance
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W75
+            reason: 'RDS instance is for demo purpose only. No backup retention period is needed'
+          - id: F80
+            reason: 'RDS instance is for demo purpose only. No deletion protection is needed'
+          - id: W28
+            reason: 'RDS instance is for demo purpose only. The name will vary with the Stack name'
+    Properties:
+      DBInstanceIdentifier: !Sub '${AWS::StackName}-${ParamDBName}'
+      Engine: mysql
+      EngineVersion: "8.0.33"
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 8
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      ManageMasterUserPassword: true
+      MasterUsername: !Ref DBUsername
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+      EnableIAMDatabaseAuthentication: true
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: 'RDS instance for customers info'
+
+
+Outputs:
+  OutStackName:
+    Description: "Stack name."
+    Value: !Sub "${AWS::StackName}"
+
+  DefaultSecurityGroup:
+    Description: DefaultSecurityGroup Id
+    Value: !GetAtt RssMainVPC.DefaultSecurityGroup
+    Export:
+      Name: !Sub ${AWS::Region}-${AWS::StackName}-DefaultSecurityGroup
+  
+  VPCId:
+    Description: VPCId of VPC
+    Value: !Ref RssMainVPC
+    Export:
+      Name: !Sub ${AWS::Region}-${AWS::StackName}-VPC

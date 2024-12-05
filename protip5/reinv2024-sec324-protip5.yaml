@@ -1,0 +1,120 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion : "2010-09-09"
+Description: >
+  re:Invent2024 - Code Talk - SEC324 - Protip#5
+  Replicate secrets to prepare for Disaster Recovery by using region replication.
+  This code will show how to create secrets randomly generated and replicate 
+  them in different regions : Primary Region and Replica Region as parameter. 
+  One secret will be encrypted using default AWS managed KMS key and 
+  the other secret will be encrypted at rest using CMK KMS.
+
+Parameters:
+  ParamRegionReplica:
+    Type: String
+    Description: "Enter the region to replicate secrets"
+    Default: 'us-west-2'
+  ParamProjectName:
+    Type: String
+    Default: "r24-sec324-protip5"
+  ParamExcludeCharacters:
+    Type: String
+    Default: '\"@\\ '
+
+Resources:
+  # CMK for SecretB in Primary Region
+  SecretBKMSKey:
+    Type: 'AWS::KMS::Key'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F76
+            reason: 'There are conditions to restrict the principal who can use the key'
+    Properties:
+      Description: Customer Managed Key to encrypt secret at rest
+      MultiRegion: true
+      EnableKeyRotation: True
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: !Sub ${AWS::StackName}_CMK_ID
+        Statement:
+          - Sid: "Allow administration of the key"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/Admin'
+            Action:
+              - "kms:*"
+            Resource: "*"
+          - Sid: "Allow use of the key through AWS Secrets Manager"
+            Effect: "Allow"
+            Principal:
+              AWS: '*'
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'kms:CallerAccount': !Sub ${AWS::AccountId}
+              StringLike:
+                'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+          - Sid: "Allow access to key metadata inside the account"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action:
+              - 'kms:Describe*'
+              - 'kms:Get*'
+              - 'kms:List*'
+              - 'kms:RevokeGrant'
+            Resource: '*'
+          
+  # KMS Alias for SecretB Key
+  SecretBKMSAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${AWS::StackName}-PrimarySecretB'
+      TargetKeyId: !Ref SecretBKMSKey
+
+  # Primary Secret B (with CMK)
+  PrimarySecretB:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}-PrimarySecretB
+      Description: !Sub 'Secret B encrypted with CMK in ${AWS::Region} and replicated to ${ParamRegionReplica}'
+      KmsKeyId: !Ref SecretBKMSKey
+      GenerateSecretString:
+        GenerateStringKey: 'password'
+        PasswordLength: 12
+        ExcludeCharacters: !Ref ParamExcludeCharacters
+        SecretStringTemplate: '{"username": "loginB"}'
+      ReplicaRegions:
+        - Region: !Ref ParamRegionReplica
+
+  # Primary Secret C (with AWS managed key)
+  PrimarySecretC:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}-PrimarySecretC
+      Description: !Sub 'Secret C encrypted with AWS managed key in ${AWS::Region} and replicated to ${ParamRegionReplica}'
+      KmsKeyId: alias/aws/secretsmanager
+      GenerateSecretString:
+        GenerateStringKey: 'password'
+        PasswordLength: 12
+        ExcludeCharacters: !Ref ParamExcludeCharacters
+        SecretStringTemplate: '{"username": "UserDB"}'
+      ReplicaRegions:
+        - Region: !Ref ParamRegionReplica
+
+Outputs:
+  SecretCArn:
+    Description: ARN of PrimarySecretC
+    Value: !Ref PrimarySecretC
+  SecretBArn:
+    Description: ARN of PrimarySecretB
+    Value: !Ref PrimarySecretB
+  PrimaryKMSKeyArn:
+    Description: ARN of the primary KMS key
+    Value: !GetAtt SecretBKMSKey.Arn
