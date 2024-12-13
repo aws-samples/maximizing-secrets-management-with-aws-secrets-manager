@@ -44,7 +44,7 @@ Parameters:
     Default: 3306
   ParamDBName:
     Type: String
-    Default: 'ChristmasCampain'
+    Default: 'Campaign'
     Description: 'Database name'
   DBInstanceClass:
     Type: String

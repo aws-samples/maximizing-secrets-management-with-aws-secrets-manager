@@ -35,7 +35,7 @@ The template accepts the following parameters:
 - **ParamSubnetCCidr**: CIDR for Public Subnet C (Default: 10.20.40.128/26)
 - **ParamLatestAmiId**: Latest Amazon Linux 2 AMI ID (auto-retrieved from SSM Parameter Store)
 - **DBPort**: Database port number (Default: 3306)
-- **ParamDBName**: Database name (Default: 'ChristmasCampain')
+- **ParamDBName**: Database name (Default: 'Campaign')
 - **DBInstanceClass**: Database instance type (Default: 'db.t3.micro')
 - **DBUsername**: Username for database access
 

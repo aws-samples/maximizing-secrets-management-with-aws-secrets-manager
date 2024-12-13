@@ -26,7 +26,7 @@ Parameters:
     Default: '10.20.30.64/26'
   ParamDBName:
     Type: String
-    Default: 'ChristmasCampain'
+    Default: 'Campain'
   DBInstanceClass:
     Type: String
     Default: 'db.t3.micro'

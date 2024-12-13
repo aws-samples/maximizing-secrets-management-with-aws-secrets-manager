@@ -68,7 +68,7 @@ That secret will be update in Secrets Manager to be attached to the neew databas
 | VpcCIDR | 10.20.30.40/24 | VPC CIDR block |
 | SubnetACIDR | 10.20.30.40/26 | Private Subnet A |
 | SubnetBCIDR | 10.20.30.64/26 | Private Subnet B |
-| DBName | ChristmasCampain | Database name |
+| DBName | Campain | Database name |
 | DBInstanceClass | db.t3.micro | Database instance type |
 | DBPort | 3306 | Database port |
 
