@@ -73,7 +73,7 @@ Please follow the [official documentation](https://docs.aws.amazon.com/secretsma
 
 ### Agent installation
 Connect to your private EC2 instance using Session Manager.
-Once connected, you can run the command below in your EC2 instance to download, build, install the agent and configure the permissin on the access token.
+Once connected, you can run the command below in your EC2 instance to download, build, install the agent and configure the permission on the access token.
 
    ```bash
       cd ~;git clone https://github.com/aws/aws-secretsmanager-agent
@@ -100,7 +100,7 @@ Human are away from secrets therefore programatically use the agent to obtain th
    ```bash
    echo 'now let play with DB secret to connect to it ;-)'
    region='<YOUR-REGION>>'
-   aws secretsmana'ger list-secrets --region $region
+   aws secretsmanager list-secrets --region $region
    secret='<DB_MASTER_USER_SECRET_NAME>'
    aws secretsmanager describe-secret --secret-id $secret --region $region
    echo 'The secret ARN is:'

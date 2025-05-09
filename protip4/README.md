@@ -140,4 +140,4 @@ That secret will be update in Secrets Manager to be attached to the neew databas
 
 ---
 
-*Created for re:Invent 2024 SEC324 Workshop*
+*Created for re:Invent 2024 SEC324 Code Talk*
