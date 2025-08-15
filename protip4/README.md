@@ -175,12 +175,12 @@ When Secrets Manager creates the hosted rotation Lambda function, it automatical
 
 ## Best Practices Implemented
 
-1. Network Isolation
+1. **Network Isolation**
    - Private subnets
    - No public access
    - Endpoint-based connectivity
 
-2. Security Controls
+2. **Security Controls**
    - Encrypted storage
    - IAM authentication
    - Secure secrets handling

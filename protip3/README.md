@@ -16,7 +16,7 @@ This template creates:
 - EC2 instance configured with AWS Systems Manager Session Manager access
 - VPC Flow Logs with CloudWatch integration
 - Required IAM roles and policies
-- RDS instance with a master credentials by AWS Secrets Manager
+- RDS instance with master credentials automatically managed by AWS Secrets Manager.
 
 ## Prerequisites
 
@@ -95,27 +95,27 @@ Once connected, you can run the command below in your EC2 instance to download, 
    ```
 
 ### Use the agent to get the DB credentials
-Human are away from secrets therefore programatically use the agent to obtain the secret value to connect to the DB. Please find the name of secret created for the DB instance deployed.
+Human are kept away from secrets; therefore programatically use the agent to obtain the secret value to connect to the DB. Please find the name of secret created for the DB instance deployed.
 
    ```bash
-   echo 'now let play with DB secret to connect to it ;-)'
-   region='<YOUR-REGION>>'
+   echo 'now let's work with DB secret to connect to it ;-)'
+   region='<YOUR-REGION>'
    aws secretsmanager list-secrets --region $region
    secret='<DB_MASTER_USER_SECRET_NAME>'
    aws secretsmanager describe-secret --secret-id $secret --region $region
    echo 'The secret ARN is:'
    curl -H "X-Aws-Parameters-Secrets-Token: $(</tmp/awssmatoken)" localhost:2773/secretsmanager/get?secretId=$secret | jq -r .ARN
-   echo 'The DB user name is :'
+   echo 'The DB username is :'
    username=`curl -H "X-Aws-Parameters-Secrets-Token: $(</tmp/awssmatoken)" localhost:2773/secretsmanager/get?secretId=$secret | jq -r .SecretString | jq -r .username`
    password=`curl -H "X-Aws-Parameters-Secrets-Token: $(</tmp/awssmatoken)" localhost:2773/secretsmanager/get?secretId=$secret | jq -r .SecretString | jq -r .password`
    echo $username
    ```
-### Connect to the DB freshy created using the credentials in AWS Secrets Manager
+### Connect to the DB created using the credentials stored in AWS Secrets Manager
 Get the database endpoint name of the database created with this template, and set its value below.
 **Note:** To connect to the MySQL database, you need the username and password defined previously.
 
    ```
-   dbendpoint='<DATABASE_NAME>.ABCD124563ED.<REGION>>.rds.amazonaws.com'
+   dbendpoint='<DATABASE_NAME>.ABCD124563ED.<REGION>.rds.amazonaws.com'
    echo 'Now connect to the database without seeing the secret value...'
    mysql -h $dbendpoint -P 3306 -u $username -p$password
 
@@ -136,17 +136,16 @@ The EC2 instance comes pre-configured with:
 - MariaDB client
 - Git
 - AWS CloudFormation bootstrap tools
-- JSON processing capabilities (jq)
+- JSON processing capabilities (`jq`)
 
 ## Best Practices Implemented
 
-- Use Secrets Manager agent instead of direct API call
-- Keep human away from secrets
+- Use the Secrets Manager agent instead of direct API call
+- Keep humans away from secrets
 - Private hosting of sensitive resources
-- Use of Systems Manager Session Manager instead of SSH
+- Use AWS Systems Manager Session Manager instead of opening SSH port over internet
 - VPC Flow Logs for network monitoring
-- Proper subnet segregation (public/private). Compute in different subnet than database
-- Least privilege IAM permissions
+- Proper subnet segregation (public/private).
 
 ## Deployment
 
