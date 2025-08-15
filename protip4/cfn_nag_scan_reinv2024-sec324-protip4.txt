@@ -1,17 +1,17 @@
 ------------------------------------------------------------
-./protip4/reinv2024-sec324-protip4.yaml
+./reinv2024-sec324-protip4.yaml
 ------------------------------------------------------------------------------------------------------------------------
 [33m| WARN W92[0m
 [33m|[0m
 [33m| Resource: ["DBInitFunction"][0m
-[33m| Line Numbers: [295][0m
+[33m| Line Numbers: [298][0m
 [33m|[0m
 [33m| Lambda functions should define ReservedConcurrentExecutions to reserve simultaneous executions[0m
 ------------------------------------------------------------
 [33m| WARN W60[0m
 [33m|[0m
 [33m| Resource: ["RssVPC"][0m
-[33m| Line Numbers: [59][0m
+[33m| Line Numbers: [60][0m
 [33m|[0m
 [33m| VPC should have a flow log attached[0m
 

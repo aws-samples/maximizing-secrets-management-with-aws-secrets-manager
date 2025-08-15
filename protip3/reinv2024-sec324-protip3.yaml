@@ -417,7 +417,7 @@ Resources:
     Properties:
       DBInstanceIdentifier: !Sub '${AWS::StackName}-${ParamDBName}'
       Engine: mysql
-      EngineVersion: "8.0.33"
+      EngineVersion: "8.0.42"
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: 8
       DBSubnetGroupName: !Ref DBSubnetGroup

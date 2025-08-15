@@ -26,13 +26,14 @@ Parameters:
     Default: '10.20.30.64/26'
   ParamDBName:
     Type: String
-    Default: 'Campain'
+    Default: 'Campaign'
   DBInstanceClass:
     Type: String
     Default: 'db.t3.micro'
   DBUsername:
     NoEcho: 'true'
     Description: Username for MySQL database access
+    Default: 'MasterDBUser'
     Type: String
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
@@ -112,18 +113,6 @@ Resources:
         - !Ref SubnetA
       SecurityGroupIds: 
         - !Ref EndpointSecurityGroup
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: '*'
-            Action:
-              - secretsmanager:Get*
-              - secretsmanager:DescribeSecret
-              - secretsmanager:ListSecret*
-              - secretsmanager:PutSecretValue
-              - secretsmanager:UpdateSecretVersionStage
-            Resource: '*'
 
   # Security Groups
   RDSSecurityGroup:
@@ -141,6 +130,16 @@ Resources:
       ToPort: !Ref DBPort
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
       Description: Allow Lambda access to RDS
+
+  SelfReferenceIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DBPort # Only MySQL port (3306)
+      ToPort: !Ref DBPort # Only MySQL port (3306)
+      SourceSecurityGroupId: !Ref RDSSecurityGroup
+      Description: Allow all traffic from within the same security group
 
   RDSSecurityGroupEgress:
     Type: AWS::EC2::SecurityGroupEgress
@@ -215,10 +214,10 @@ Resources:
     Type: 'AWS::SecretsManager::Secret'
     Properties:
       Name: !Sub '${AWS::StackName}-${DBUserB}'
-      Description: !Sub 'Secret for MySQL database reader user: ${DBUserA}'
+      Description: !Sub 'Secret for MySQL database reader user: ${DBUserB}'
       KmsKeyId: alias/aws/secretsmanager
       GenerateSecretString:
-        SecretStringTemplate: !Sub '{"username": "${AWS::StackName}-${DBUserB}}"}'
+        SecretStringTemplate: !Sub '{"username": "${AWS::StackName}-${DBUserB}"}'
         GenerateStringKey: "password"
         PasswordLength: 16
         ExcludeCharacters: '"@/\\'
@@ -244,10 +243,12 @@ Resources:
             reason: 'RDS instance is for demo purpose only. No deletion protection is needed'
           - id: W28
             reason: 'RDS instance is for demo purpose only. The name will vary with the Stack name'
+          - id: F24
+            reason: 'RDS instance is for demo purpose only. The MasterDBUsername has a default value'
     Properties:
       DBInstanceIdentifier: !Sub '${AWS::StackName}-${ParamDBName}'
       Engine: mysql
-      EngineVersion: "8.0.33"
+      EngineVersion: "8.0.42"
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: 8
       DBSubnetGroupName: !Ref DBSubnetGroup
@@ -264,6 +265,7 @@ Resources:
         - Key: Name
           Value: 'RDS instance for our application'
 
+
   # Lambda Role
   LambdaRole:
     Type: AWS::IAM::Role
@@ -276,7 +278,8 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - !Sub "arn:${AWS::Partition}:iam::${AWS::Partition}:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+        - !Sub "arn:${AWS::Partition}:iam::${AWS::Partition}:policy/AmazonRDSReadOnlyAccess" # For automated RDS provision
       Policies:
         - PolicyName: SecretsAccess
           PolicyDocument:
@@ -293,7 +296,13 @@ Resources:
   # Lambda Function
   DBInitFunction:
     Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: 'CloudWatch Logs permissions provided by AWSLambdaVPCAccessExecutionRole managed policy'
     Properties:
+      Description: 'Lambda function to create RDS database and users'
       Handler: index.handler
       Role: !GetAtt LambdaRole.Arn
       Code:
@@ -311,51 +320,66 @@ Resources:
           logger.setLevel(logging.INFO)
 
           def handler(event, context):
+            try:
+              logger.info(f"Received event: {json.dumps(event)}")
+              
               # Get RDS credentials from Secrets Manager
               secret_name = os.environ['MASTERDB_ARN']
               user1_secret = os.environ['USER1_PWD_ARN']
+              user2_secret = os.environ['USER2_PWD_ARN']
 
               session = boto3.session.Session()
               secrets_manager = session.client('secretsmanager')
 
               master_creds = json.loads(secrets_manager.get_secret_value(SecretId=secret_name)['SecretString'])
               user1_creds = json.loads(secrets_manager.get_secret_value(SecretId=user1_secret)['SecretString'])
+              user2_creds = json.loads(secrets_manager.get_secret_value(SecretId=user2_secret)['SecretString'])
 
               # Connect to RDS
-              conn = pymysql.connect(
-                  host=os.environ['DB_HOST'],
-                  user=master_creds['username'],
-                  password=master_creds['password']
-              )
-              
+              try:
+                conn = pymysql.connect(
+                    host=os.environ['DB_HOST'],
+                    user=master_creds['username'],
+                    password=master_creds['password']
+                )
+              except pymysql.MySQLError as e:
+                logger.error("ERROR: Unexpected error: Could not connect to MySQL instance.")
+                logger.error(e)
+                raise
+
               cursor = conn.cursor()
               
               # Create database
-              cursor.execute("CREATE DATABASE IF NOT EXISTS os.environ['DB_NAME']")
-              cursor.execute("USE os.environ['DB_NAME']")
-
+              cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{os.environ['DB_NAME']}`")
+              cursor.execute(f"USE `{os.environ['DB_NAME']}`")
               # Create users
-              username = user1_creds['username']
-              password = user1_creds['password']
+              username1 = user1_creds['username']
+              password1 = user1_creds['password']
+              username2 = user2_creds['username']
+              password2 = user2_creds['password']
 
 
-              cursor.execute(f"CREATE USER IF NOT EXISTS '{username}'@'%'  IDENTIFIED BY '{password}'")
-              
+              # Create users using parameterized queries
+              cursor.execute("CREATE USER IF NOT EXISTS %s@'%%' IDENTIFIED BY %s", (username1, password1))
+              logger.info(f"User {username1} is created successfully")
+              cursor.execute("CREATE USER IF NOT EXISTS %s@'%%' IDENTIFIED BY %s", (username2, password2))
+              logger.info(f"User {username2} is created successfully")
+
               conn.commit()
               cursor.close()
               conn.close()
               logger.info(f"Database setup completed successfully - no longer using master user")
 
-              # Connect to RDS
+              # Connect to RDS using username1
               conn_user = pymysql.connect(
                   host=os.environ['DB_HOST'],
-                  user=user_creds['username'],
-                  password=user_creds['password']
+                  user=username1,
+                  password=password1
               )
 
               cursor_user = conn_user.cursor()
 
-              logger.info(f"Now let's try to connect with our fresh DB user: {username}")
+              logger.info(f"Now let's try to connect with our fresh DB user: {username1}")
 
               # Query to get the current date and time
               cursor_user.execute("SELECT CURRENT_TIMESTAMP;")
@@ -365,15 +389,17 @@ Resources:
               # Query to get the current user
               cursor_user.execute("SELECT USER();")
               current_user = cursor_user.fetchone()
-              logger.info(f"Current user in database: {current_user[0]}")
+              logger.info(f"SELECT USER() returns: {current_user[0]}")
 
               cursor_user.close()
               conn_user.close()
-              
-              return {
-                  'statusCode': 200,
-                  'body': 'Database setup completed successfully'
-              }
+              logger.info(f"Database setup completed successfully - connecting with {username1}")
+              return {'statusCode': 200, 'body': 'Database setup completed'}
+
+            except Exception as e:
+                logger.error(f"Error during database initialization: {e}")
+                
+
       Runtime: python3.12
       Timeout: 300
       MemorySize: 256
@@ -386,14 +412,37 @@ Resources:
         Variables:
           MASTERDB_ARN: !GetAtt RDSInstance.MasterUserSecret.SecretArn
           USER1_PWD_ARN: !GetAtt DBUserASecret.Id
+          USER2_PWD_ARN: !GetAtt DBUserBSecret.Id
           DB_HOST: !GetAtt RDSInstance.Endpoint.Address
           DB_NAME: !GetAtt RDSInstance.DBInstanceIdentifier
       Layers:
-        - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${ParamLambdaLayerMySQL}"
-      
+        - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:layer:${ParamLambdaLayerMySQL}"
 
-  # Secret Target Attachment
-  SecretTargetAttachment:
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref RssVPC
+      Tags:
+        - Key: Name
+          Value: Private Route Table
+
+  # Associate subnets with route table
+  PrivateSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+
+  # Secret A Target Attachment
+  SecretATargetAttachment:
     DependsOn: 
       - RDSInstance
       - DBInitFunction
@@ -404,10 +453,22 @@ Resources:
       TargetId: !Ref RDSInstance
       TargetType: AWS::RDS::DBInstance
 
- # Rotation Schedule
+  # Secret B Target Attachment
+  SecretBTargetAttachment:
+    DependsOn: 
+      - RDSInstance
+      - DBInitFunction
+      - DBUserBSecret
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !GetAtt DBUserBSecret.Id
+      TargetId: !Ref RDSInstance
+      TargetType: AWS::RDS::DBInstance
+
+  # Rotation Schedule
   SecretRotationSchedule:
     Type: AWS::SecretsManager::RotationSchedule
-    DependsOn: SecretTargetAttachment
+    DependsOn: SecretATargetAttachment
     Properties:
       SecretId: !Ref DBUserASecret
       HostedRotationLambda:
@@ -418,10 +479,10 @@ Resources:
           - - !Ref LambdaSecurityGroup
         VpcSubnetIds: !Join
           - ","
-          - - Ref: SubnetB
+          - - !Ref SubnetB
       RotationRules:
-        Duration: 2h
-        ScheduleExpression: 'rate(4 hour)'
+        Duration: 1h
+        ScheduleExpression: 'rate(4 days)'
 
 Outputs:
   RDSEndpoint:
