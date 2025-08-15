@@ -98,7 +98,7 @@ Once connected, you can run the command below in your EC2 instance to download, 
 Human are kept away from secrets; therefore programatically use the agent to obtain the secret value to connect to the DB. Please find the name of secret created for the DB instance deployed.
 
    ```bash
-   echo 'now let's work with DB secret to connect to it ;-)'
+   echo 'Fetch the DB managed credentials in Secrets Manager'
    region='<YOUR-REGION>'
    aws secretsmanager list-secrets --region $region
    secret='<DB_MASTER_USER_SECRET_NAME>'
