@@ -17,6 +17,8 @@ This template creates:
 - VPC Flow Logs with CloudWatch integration
 - Required IAM roles and policies
 - RDS instance with master credentials automatically managed by AWS Secrets Manager.
+![Architecture Diagram](rinv24.protip3.png)
+
 
 ## Prerequisites
 
@@ -33,19 +35,24 @@ The template accepts the following parameters:
 - **ParamRssEC2SubnetACidr**: CIDR for Private Subnet A (Default: 10.20.40.0/26)
 - **ParamSubnetBCidr**: CIDR for Private Subnet B (Default: 10.20.40.64/26)
 - **ParamSubnetCCidr**: CIDR for Public Subnet C (Default: 10.20.40.128/26)
-- **ParamLatestAmiId**: Latest Amazon Linux 2 AMI ID (auto-retrieved from SSM Parameter Store)
+- **ParamLatestAmiId**: Latest Amazon Linux 2023 AMI ID (auto-retrieved from SSM Parameter Store)
+- **ParamEC2InstanceType**: EC2 instance type (Default: t3.micro)
+- **DBEngineVersion**: MySQL engine version (Default: "8.0.42")
 - **DBPort**: Database port number (Default: 3306)
 - **ParamDBName**: Database name (Default: 'Campaign')
 - **DBInstanceClass**: Database instance type (Default: 'db.t3.micro')
-- **DBUsername**: Username for database access
+- **DBUsername**: Username for MySQL database access (Default: 'DBAdminUser')
+- **DBUser**: Database username for app (Default: 'Bob')
 
 ## Resources Created
 
 1. **VPC Infrastructure**
    - VPC with DNS support enabled
    - 2 Private Subnets (A and B)
-   - 1 Public Subnet (C) that will host a NAT Gateway
+   - 1 Public Subnet (C) that hosts a NAT Gateway
    - Internet Gateway
+   - NAT Gateway with Elastic IP
+   - Route tables for public and private subnets
    - VPC Flow Logs
 
 2. **Security**
@@ -54,12 +61,19 @@ The template accepts the following parameters:
    - VPC Flow Logs with CloudWatch integration
 
 3. **Compute**
+   - Launch Template for EC2 instances
    - EC2 instance with Systems Manager Session Manager access
    - Instance Profile with necessary permissions
 
 4. **Database**
-   - RDS DB MySQL instance in private subnet
+   - RDS MySQL instance in private subnet
    - RDS master credentials managed by AWS Secrets Manager
+   - DBUser secret for application access
+   - DB Subnet Group spanning multiple AZs
+   - Automatic database setup with sample mocktail data
+
+5. **Secrets Management**
+   - DBUser secret with generated credentials.
 
 ## Security Features
 
@@ -76,6 +90,7 @@ Connect to your private EC2 instance using Session Manager.
 Once connected, you can run the command below in your EC2 instance to download, build, install the agent and configure the permission on the access token.
 
    ```bash
+      date
       cd ~;git clone https://github.com/aws/aws-secretsmanager-agent
       sudo yum -y groupinstall "Development Tools"
       date
@@ -100,43 +115,63 @@ Human are kept away from secrets; therefore programatically use the agent to obt
    ```bash
    echo 'Fetch the DB managed credentials in Secrets Manager'
    region='<YOUR-REGION>'
-   aws secretsmanager list-secrets --region $region
-   secret='<DB_MASTER_USER_SECRET_NAME>'
-   aws secretsmanager describe-secret --secret-id $secret --region $region
-   echo 'The secret ARN is:'
+   aws secretsmanager list-secrets --query 'reverse(sort_by(SecretList[?DeletedDate==null], &CreatedDate))[*].[Name,ARN,CreatedDate]' --output table --region $region
+   secret='<DB_USER_SECRET_NAME_ARN>'
+   echo 'The secret ARN is: '$secret
    curl -H "X-Aws-Parameters-Secrets-Token: $(</tmp/awssmatoken)" localhost:2773/secretsmanager/get?secretId=$secret | jq -r .ARN
-   echo 'The DB username is :'
    username=`curl -H "X-Aws-Parameters-Secrets-Token: $(</tmp/awssmatoken)" localhost:2773/secretsmanager/get?secretId=$secret | jq -r .SecretString | jq -r .username`
    password=`curl -H "X-Aws-Parameters-Secrets-Token: $(</tmp/awssmatoken)" localhost:2773/secretsmanager/get?secretId=$secret | jq -r .SecretString | jq -r .password`
-   echo $username
+   echo 'The DB username is :'$username
    ```
 ### Connect to the DB created using the credentials stored in AWS Secrets Manager
-Get the database endpoint name of the database created with this template, and set its value below.
-**Note:** To connect to the MySQL database, you need the username and password defined previously.
+Get the database full endpoint name of the database created with this template, and set its value below.
+**Note:** To connect to the MySQL database, you need:
+- the username and password defined previously
+- the value of <ParamDBName>. By default `Campaign`.
 
    ```
-   dbendpoint='<DATABASE_NAME>.ABCD124563ED.<REGION>.rds.amazonaws.com'
+   dbendpoint='DATABASE_NAME.ABCD124563ED.REGION.rds.amazonaws.com'
+   DBName='ParamDBName'
    echo 'Now connect to the database without seeing the secret value...'
-   mysql -h $dbendpoint -P 3306 -u $username -p$password
+   mysql -h $dbendpoint -P 3306 -u $username -p$password -D $DBName
 
    ```
+
+### Query the Database to find the top three most successful campaign
+```SQL
+SELECT name, target_public, promotion_results
+FROM Mocktail 
+ORDER BY promotion_results DESC 
+LIMIT 3;
+```
+
+The results should look at below:
+
+MySQL [Campaign]> SELECT name, target_public, promotion_results
+    -> FROM Mocktail
+    -> ORDER BY promotion_results DESC
+    -> LIMIT 3;
+![Sample of SQL Resulsts snapshp](rinv24.protip3.SQLExtract.png)
+
 
 ## Notes
 
-- You don't need to see the secrets, your application relies on AWS Secrets Manager agent to get the needed secrets
-- The EC2 instance is accessible via AWS Systems Manager Session Manager only
-- Database credentials should be managed securely through AWS Secrets Manager
-
+- **Humans are kept away from secrets** - Applications use AWS Secrets Manager agent to retrieve credentials
+- The private EC2 instance is accessible via AWS Systems Manager Session Manager only
+- Database credentials should be managed securely through AWS Secrets Manager.
 
 
 ## EC2 Instance Configuration
 
 The EC2 instance comes pre-configured with:
 - AWS Systems Manager Agent
-- MariaDB client
+- MariaDB 10.5 client
 - Git
 - AWS CloudFormation bootstrap tools
 - JSON processing capabilities (`jq`)
+- Python 3.12 and pip
+- PyMySQL and Boto3 libraries
+- Automated database setup script
 
 ## Best Practices Implemented
 
@@ -156,4 +191,4 @@ The template can be deployed through:
 
 
 
-*Created for re:Invent 2024 - SEC324 - Code Talk*
+*Originally created for re:Invent 2024 - SEC324 - Code Talk & updated for the AWS Los Angeles Summit Sept 2025*

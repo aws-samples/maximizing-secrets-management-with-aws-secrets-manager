@@ -1,12 +1,5 @@
 ------------------------------------------------------------
-./protip3/reinv2024-sec324-protip3.yaml
-------------------------------------------------------------------------------------------------------------------------
-[33m| WARN W5[0m
-[33m|[0m
-[33m| Resource: ["ComputeSecurityGroup"][0m
-[33m| Line Numbers: [341][0m
-[33m|[0m
-[33m| Security Groups found with cidr open to world on egress[0m
-
+protip3/reinv2024-sec324-protip3.yaml
+------------------------------------------------------------
 Failures count: 0
-Warnings count: 1
+Warnings count: 0

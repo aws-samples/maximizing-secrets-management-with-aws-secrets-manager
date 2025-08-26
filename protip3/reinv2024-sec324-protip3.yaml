@@ -37,7 +37,13 @@ Parameters:
     Default: 10.20.40.128/26
   ParamLatestAmiId:
     Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
-    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
+  ParamEC2InstanceType:
+    Type: String
+    Default: t3.micro
+  DBEngineVersion:
+    Type: String
+    Default: "8.0.42"
   DBPort:
     Type: Number
     Description: 'Database port'
@@ -55,8 +61,198 @@ Parameters:
     Type: String
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+    Default: 'DBAdminUser'
+  DBUser:
+    Type: String
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    Description: 'Database username for app'
+    Default: 'Bob'
     
 Resources:
+  ## Generate secret for the DB User
+  DBUserSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub '${AWS::StackName}-${DBUser}'
+      Description: !Sub 'Secret for MySQL database reader user: ${DBUser}'
+      KmsKeyId: alias/aws/secretsmanager
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "${AWS::StackName}-${DBUser}"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\''`[]{}()<>|&*;$!?^~#%'
+
+  RssLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateData:
+        ImageId: !Ref ParamLatestAmiId
+        InstanceType: !Ref ParamEC2InstanceType
+        IamInstanceProfile:
+          Name: !Ref RssSSMInstanceProfile
+        SecurityGroupIds:
+        - !Ref ComputeSecurityGroup
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+          HttpTokens: required
+          InstanceMetadataTags: enabled
+        UserData:
+          Fn::Base64:
+            !Sub 
+            - |
+              #!/bin/bash
+              yum update -y
+              yum update -y aws-cfn-bootstrap
+              yum install -y jq git mariadb105 python3.12-pip
+              python3.12 -m pip install pymysql boto3
+              date
+              systemctl enable amazon-ssm-agent
+              systemctl start amazon-ssm-agent
+          
+              # Create Python script
+              cat > /tmp/setup_db.py << 'EOF'
+              #!/usr/bin/env python3.12
+              import pymysql
+              import boto3
+              import json
+              import logging
+
+              # Configure logging
+              logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+              logger = logging.getLogger(__name__)
+
+              try:
+                  logger.info("Starting database setup script")
+                  
+                  secrets_client = boto3.client('secretsmanager', region_name='${AWSRegion}')
+                  
+                  # Get DB Admin credentials from RDS MasterUserSecret
+                  logger.info("Retrieving RDS master secret")
+                  admin_secret = secrets_client.get_secret_value(SecretId='${MasterSecretArn}')
+                  admin_creds = json.loads(admin_secret['SecretString'])
+                  logger.info("Successfully retrieved RDS master credentials")
+                  
+                  # Get DBUser credentials
+                  logger.info("Retrieving DBUser secret")
+                  user_secret = secrets_client.get_secret_value(SecretId='${DBUserSecretArn}')
+                  user_creds = json.loads(user_secret['SecretString'])
+                  logger.info(f"Successfully retrieved DBUser credentials for user: {user_creds['username']}")
+                  
+                  # Connect without specifying database first
+                  logger.info(f"Connecting to RDS host: '${host}'")
+                  conn = pymysql.connect(
+                      host='${host}',
+                      user=admin_creds['username'],
+                      password=admin_creds['password']
+                  )
+                  logger.info("Successfully connected to RDS as admin")
+                  
+                  cursor = conn.cursor()
+                  logger.info("Creating database ${DBName}")
+                  cursor.execute("CREATE DATABASE IF NOT EXISTS ${DBName}")
+                  cursor.execute("USE ${DBName}")
+                  logger.info("Database ${DBName} created/selected")                  
+                             
+                  logger.info("Creating Mocktail table and the effort done to promote each")
+                  cursor.execute("""
+                  CREATE TABLE Mocktail (
+                      id INT PRIMARY KEY AUTO_INCREMENT,
+                      name VARCHAR(100),
+                      ingredients TEXT,
+                      recipe TEXT,
+                      promotion_effort VARCHAR(200),
+                      target_public VARCHAR(100),
+                      promotion_results TEXT
+                  )
+                  """)
+                  logger.info("Mocktail table created")
+                  
+                  mocktails = [
+                      ("Virgin Mojito", "Mint, lime, soda water, sugar", "Muddle mint and lime, add sugar, top with soda", "Social media campaign, influencer partnerships", "Health-conscious millennials", "25% increase in orders, 15K social media impressions"),
+                      ("Shirley Temple", "Ginger ale, grenadine, cherry", "Mix ginger ale with grenadine, garnish with cherry", "Kids menu promotion, family restaurant partnerships", "Families with children", "40% increase in family dining, featured in 50 restaurants"),
+                      ("Virgin Pina Colada", "Pineapple juice, coconut cream, ice", "Blend all ingredients until smooth", "Summer festival booths, beach resort partnerships", "Vacation travelers, beach-goers", "30% summer sales boost, 20 resort partnerships established"),
+                      ("Virgin Mary", "Tomato juice, worcestershire, tabasco, celery", "Mix all ingredients, garnish with celery stick", "Brunch menu feature, health food stores", "Health enthusiasts, brunch crowd", "20% brunch sales increase, 12 health store partnerships"),
+                      ("Arnold Palmer", "Iced tea, lemonade", "Mix equal parts iced tea and lemonade", "Golf course partnerships, sports events", "Golf players, sports fans", "Featured in 25 golf courses, 18% sports venue sales"),
+                      ("Virgin Moscow Mule", "Ginger beer, lime juice, mint", "Mix in copper mug with ice, garnish with lime", "Trendy bar promotions, Instagram campaigns", "Young professionals, social media users", "35% bar mocktail sales, 22K Instagram engagement"),
+                      ("Cucumber Mint Cooler", "Cucumber, mint, lime, sparkling water", "Muddle cucumber and mint, add lime and sparkling water", "Spa partnerships, wellness events", "Spa clients, wellness enthusiasts", "Featured in 15 spas, 28% wellness event bookings"),
+                      ("Berry Lemonade", "Mixed berries, lemon juice, sugar, water", "Blend berries, mix with lemon juice and sugar", "Farmers market booths, summer festivals", "Families, festival attendees", "Sold 2000+ cups at festivals, 45% repeat customers"),
+                      ("Tropical Punch", "Pineapple juice, orange juice, cranberry juice", "Mix all fruit juices, serve over ice", "Tropical themed events, cruise partnerships", "Vacation seekers, cruise passengers", "Featured on 8 cruise lines, 33% tropical event bookings"),
+                      ("Ginger Lime Fizz", "Fresh ginger, lime juice, club soda, honey", "Muddle ginger, add lime and honey, top with soda", "Health food cafes, yoga studios", "Health conscious consumers", "Available in 30 cafes, 25% yoga studio partnerships"),
+                      ("Watermelon Mint Splash", "Watermelon, mint, lime, sparkling water", "Blend watermelon, muddle mint, add lime and sparkling water", "Summer pool parties, outdoor events", "Pool party hosts, outdoor enthusiasts", "Featured at 50+ pool parties, 40% outdoor event bookings"),
+                      ("Pomegranate Sparkler", "Pomegranate juice, lemon juice, sparkling water", "Mix pomegranate and lemon juice, top with sparkling water", "Antioxidant health campaigns, upscale restaurants", "Health-focused diners, upscale clientele", "Menu item in 20 upscale restaurants, 22% health campaign engagement"),
+                      ("Lavender Lemonade", "Lavender syrup, lemon juice, water", "Mix lavender syrup with lemon juice and water", "Boutique cafe partnerships, wedding venues", "Cafe enthusiasts, wedding guests", "Signature drink in 12 boutique cafes, 60 wedding bookings"),
+                      ("Peach Iced Tea", "Peach puree, black tea, honey", "Blend peach puree with cooled tea and honey", "Southern restaurant chains, tea shop partnerships", "Southern food lovers, tea enthusiasts", "Featured in 35 Southern restaurants, 28% tea shop sales increase"),
+                      ("Coconut Lime Cooler", "Coconut water, lime juice, mint", "Mix coconut water with lime juice, garnish with mint", "Fitness center partnerships, beach clubs", "Fitness enthusiasts, beach club members", "Available in 40 fitness centers, 50% beach club adoption")
+                  ]
+
+                  logger.info("Inserting mocktail data")
+                  cursor.executemany("INSERT INTO Mocktail (name, ingredients, recipe, promotion_effort, target_public, promotion_results) VALUES (%s, %s, %s, %s, %s, %s)", mocktails)
+                  
+                  logger.info(f"Creating user: {user_creds['username']}")
+                  cursor.execute("CREATE USER %s@'%%' IDENTIFIED BY %s", (user_creds['username'], user_creds['password']))
+                  cursor.execute(f"GRANT SELECT ON ${DBName}.Mocktail TO '{user_creds['username']}'@'%'")
+                  logger.info("User created and SELECT permissions granted")
+
+                  conn.commit()
+                  logger.info(f"Successfully inserted {len(mocktails)} mocktail records")
+                  conn.close()
+                  
+                  # Verify DBUser can connect and query
+                  logger.info(f"Verifying DB User connection with username: {user_creds['username']}")
+                  try:
+                      user_conn = pymysql.connect(
+                          host='${host}',
+                          user=user_creds['username'],
+                          password=user_creds['password'],
+                          database='${DBName}'
+                      )
+                      user_cursor = user_conn.cursor()
+                      user_cursor.execute("SELECT COUNT(*) FROM Mocktail")
+                      count = user_cursor.fetchone()[0]
+                      logger.info(f"SUCCESS: {user_creds['username']} can connect and query. Found {count} mocktail records")
+
+                      # Query for 3 most popular mocktails ordered by promotion results
+                      logger.info("{user_creds['username']} is looking for 3 most popular mocktails ordered by promotion results...")
+                      user_cursor.execute("SELECT name, target_public, promotion_results FROM Mocktail ORDER BY promotion_results DESC LIMIT 3")
+                      popular_mocktails = user_cursor.fetchall()
+                      logger.info("Top 3 mocktails by promotion results:")
+                      for i, (name, target_public, results) in enumerate(popular_mocktails, 1):
+                          logger.info(f"{i}. {name} - Target: {target_public} - Results: {results}")
+
+
+                      user_conn.close()
+                  except Exception as e:
+                      logger.error(f"ERROR: DBUser connection failed: {str(e)}")
+                      raise
+                  
+                  logger.info("Database setup completed successfully")
+                  
+              except Exception as e:
+                  logger.error(f"Database setup failed: {str(e)}")
+                  raise
+
+              EOF
+              
+              # Run the script and capture logs
+              python3.12 /tmp/setup_db.py > /var/log/db_setup.log 2>&1
+              echo "Database setup script completed. Check /var/log/db_setup.log for details"
+              
+              systemctl enable amazon-ssm-agent
+              systemctl start amazon-ssm-agent
+            - MasterSecretArn: !GetAtt RDSInstance.MasterUserSecret.SecretArn
+              DBName: !Ref ParamDBName
+              DBUserSecretArn: !GetAtt DBUserSecret.Id
+              AWSRegion: !Ref AWS::Region
+              host: !GetAtt RDSInstance.Endpoint.Address
+        TagSpecifications:
+        - ResourceType: instance
+          Tags:
+          - Key: RemoteAccess
+            Value: "SSM Session is your friend NO NEED for SSH ;-)"
+          - Key: Role
+            Value: "EC2 with Linux AMI for Secrets Manager Agent to simulate Hybrid"
   #Deploy the EC2 instance, attach an Instance Profile that allows the EC2 instance to call SSM
   RssSSMRole:
     Type: AWS::IAM::Role
@@ -101,6 +297,7 @@ Resources:
           - Effect: Allow
             Action: 
               - rds-db:connect
+              - rds:DescribeDBInstances
             Resource: '*'
       Roles:
         - !Ref 'RssSSMRole'
@@ -113,34 +310,20 @@ Resources:
       Path : /
       Roles: [!Ref RssSSMRole]
 
-#EC2 instance for management : secrets manager agent + access to DB
-  RssEC2Instance1:
-    Type: "AWS::EC2::Instance"
+#EC2 instance created from Launch Template
+  RssEC2InstanceTest:
+    DependsOn: RssLaunchTemplate
+    Type: AWS::EC2::Instance
     Properties:
-      ImageId: !Ref ParamLatestAmiId
-      InstanceType: t2.micro
-      SecurityGroupIds:
-        - !Ref ComputeSecurityGroup
+      LaunchTemplate: 
+          LaunchTemplateId: !Ref RssLaunchTemplate
+          Version: 1
       SubnetId: !Ref RssEC2SubnetA
-      IamInstanceProfile: !Ref RssSSMInstanceProfile
       Tags:
-      - Key: RemoteAccess
-        Value: "SSM Session is your friend NO NEED for SSH ;-)"
       - Key: Name
         Value: !Sub CF-Linux-PrivA-#1-${AWS::StackName}
-      - Key: Role
-        Value: "EC2 with Linux AMI for Secrets Manager Agent to simulate Hybrid"
-      UserData:
-        Fn::Base64: 
-          !Sub |
-          #!/bin/bash
-          yum update -y aws-cfn-bootstrap
-          yum install -y jq
-          yum install -y git
-          yum install -y aws-cfn-bootstrap
-          yum install -y mariadb
-          date
-          
+
+         
 #Create the VPC which will host our EC2 instances
   RssMainVPC:
     Type: AWS::EC2::VPC
@@ -338,7 +521,12 @@ Resources:
 
 #Deploy the Security Group for the private EC2
   ComputeSecurityGroup:
-    Type: "AWS::EC2::SecurityGroup"
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W5
+            reason: 'This SG will be attached to private compute that need internet connectivity'
     Properties:
       VpcId: !Ref RssMainVPC
       GroupDescription: Private EC2 Security Group
@@ -348,11 +536,6 @@ Resources:
   #Ingress rule allowing traffic from the EC2 
   ComputeSecurityGrouppEgressHTTPS:
     Type : AWS::EC2::SecurityGroupEgress
-    Metadata:
-      cfn_nag:
-        rules_to_suppress:
-          - id: W5
-            reason: 'This security group will be attached to private compute'
     Properties:
       Description : "SG Outbound EC2 - HTTPS"
       GroupId: !Ref ComputeSecurityGroup
@@ -408,6 +591,8 @@ Resources:
     Metadata:
       cfn_nag:
         rules_to_suppress:
+          - id: F24
+            reason: 'RDS instance is for demo purpose only. Fixing a DB Admin User ease the deployment'
           - id: W75
             reason: 'RDS instance is for demo purpose only. No backup retention period is needed'
           - id: F80
@@ -417,7 +602,7 @@ Resources:
     Properties:
       DBInstanceIdentifier: !Sub '${AWS::StackName}-${ParamDBName}'
       Engine: mysql
-      EngineVersion: "8.0.42"
+      EngineVersion: !Ref DBEngineVersion
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: 8
       DBSubnetGroupName: !Ref DBSubnetGroup
