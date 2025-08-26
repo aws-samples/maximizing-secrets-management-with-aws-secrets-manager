@@ -3,7 +3,7 @@
 ![CloudFormation](https://img.shields.io/badge/CloudFormation-Templates-blue)
 ![AWS Security](https://img.shields.io/badge/AWS-Security-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
-
+![Mocktail](https://img.shields.io/badge/🍹-Mocktail%20Demo-pink)
 
 This CloudFormation template sets up the necessary infrastructure prerequisites for an AWS environment with secure access patterns to demonstrate how AWS Secrets Manager agent can work.
 
@@ -65,12 +65,17 @@ The template accepts the following parameters:
    - EC2 instance with Systems Manager Session Manager access
    - Instance Profile with necessary permissions
 
-4. **Database**
+4. **🍹 Database**
    - RDS MySQL instance in private subnet
    - RDS master credentials managed by AWS Secrets Manager
    - DBUser secret for application access
    - DB Subnet Group spanning multiple AZs
    - Automatic database setup with sample mocktail data
+      - Heathy ingredients: 🍋 🥥 🍓 🍊 🧊
+      - Recipes: 🍸 🥤
+      - Marketing efforts: 💹 📊
+      - Target : 🎯
+
 
 5. **Secrets Management**
    - DBUser secret with generated credentials.
@@ -127,7 +132,7 @@ Human are kept away from secrets; therefore programatically use the agent to obt
 Get the database full endpoint name of the database created with this template, and set its value below.
 **Note:** To connect to the MySQL database, you need:
 - the username and password defined previously
-- the value of <ParamDBName>. By default `Campaign`.
+- the value of `ParamDBName`. By default `Campaign`.
 
    ```
    dbendpoint='DATABASE_NAME.ABCD124563ED.REGION.rds.amazonaws.com'
@@ -191,4 +196,6 @@ The template can be deployed through:
 
 
 
-*Originally created for re:Invent 2024 - SEC324 - Code Talk & updated for the AWS Los Angeles Summit Sept 2025*
+*Originally created for re:Invent 2024 - SEC324 - Code Talk & updated for the AWS Los Angeles Summit Sept 2025* 
+
+ 🍹 Cheers! (with mocktails)!
