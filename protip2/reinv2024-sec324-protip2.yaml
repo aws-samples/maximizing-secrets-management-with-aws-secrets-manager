@@ -23,14 +23,14 @@ Parameters:
     Default: "r24-sec324-protip2"
   ParamPrefix:
     Type: String
-    Default: "SEC324-ProTip2-"
+    Default: "ProTip2-"
   ParamPasswordLength:
     Type: Number
     Description: "The minimum length for the password"
     Default: 12
   ParamUsername:
     Type: String
-    Default: "r24-sec324-protip2-username"
+    Default: "protip2-username"
   ParamExcludeCharacters:
     Type: String
     Default: '\"@\\ '

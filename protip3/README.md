@@ -151,7 +151,7 @@ aws rds describe-db-instances --query 'DBInstances[].[DBInstanceIdentifier,Endpo
 #### Connect to the MySQL database
 To connect to the databse, you need:
 - the `$username` and `$password` defined previously
-- the value of `ParamDBName`.
+- the value of `ParamDBName`. This is the value you set in the parameter and you can find it in the output. The default value is `Campaign`.
 
 Replace the parameters below with the right values and run those commands:
 

@@ -51,6 +51,7 @@ Parameters:
   ParamDBName:
     Type: String
     Default: 'Campaign'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
     Description: 'Database name'
   DBInstanceClass:
     Type: String
@@ -236,18 +237,8 @@ Resources:
               EOF
               
               # Run the script and capture logs
-              #python3.12 /tmp/setup_db.py > /var/log/db_setup.log 2>&1
-              #echo "Database setup script completed. Check /var/log/db_setup.log for details"
-              
-              # Run the script and capture logs
-              if python3.12 /tmp/setup_db.py > /var/log/db_setup.log 2>&1; then
-                  echo "Database setup completed successfully"
-                  /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource RssEC2InstanceTest --region ${AWS::Region}
-              else
-                  echo "Database setup failed"
-                  /opt/aws/bin/cfn-signal -e 1 --stack ${AWS::StackName} --resource RssEC2InstanceTest --region ${AWS::Region}
-              fi
-
+              python3.12 /tmp/setup_db.py > /var/log/db_setup.log 2>&1
+              echo "Database setup script completed. Check /var/log/db_setup.log for details"
 
               systemctl enable amazon-ssm-agent
               systemctl start amazon-ssm-agent
@@ -324,10 +315,6 @@ Resources:
   RssEC2InstanceTest:
     DependsOn: RssLaunchTemplate
     Type: AWS::EC2::Instance
-    CreationPolicy:
-      ResourceSignal:
-        Count: 1
-        Timeout: PT10M
     Properties:
       LaunchTemplate: 
           LaunchTemplateId: !Ref RssLaunchTemplate
@@ -645,7 +632,14 @@ Outputs:
     Value: !Ref DBUserSecret
     Export:
       Name: !Sub ${AWS::Region}-${AWS::StackName}-DBUserSecretArn
-  
+
+  #DB Name
+  DBName:
+    Description: Database name
+    Value: !Ref ParamDBName
+    Export:
+      Name: !Sub ${AWS::Region}-${AWS::StackName}-DBName
+
   # Database Endpoint
   DatabaseEndpoint:
     Description: RDS Database Endpoint
