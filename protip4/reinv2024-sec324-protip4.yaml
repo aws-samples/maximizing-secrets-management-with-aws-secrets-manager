@@ -27,9 +27,6 @@ Parameters:
   ParamDBName:
     Type: String
     Default: 'Campaign'
-  DBInstanceClass:
-    Type: String
-    Default: 'db.t3.micro'
   DBUsername:
     NoEcho: 'true'
     Description: Username for MySQL database access
@@ -37,10 +34,20 @@ Parameters:
     Type: String
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBEngineVersion:
+    Type: String
+    Default: "8.0.42"
   DBPort:
     Type: Number
     Description: 'Database port'
     Default: 3306
+  ParamDBName:
+    Type: String
+    Default: 'Campaign'
+    Description: 'Database name'
+  DBInstanceClass:
+    Type: String
+    Default: 'db.t3.micro'  
   DBUserA:
     Type: String
     Description: 'Database username for app'
@@ -248,7 +255,7 @@ Resources:
     Properties:
       DBInstanceIdentifier: !Sub '${AWS::StackName}-${ParamDBName}'
       Engine: mysql
-      EngineVersion: "8.0.42"
+      EngineVersion: !Ref DBEngineVersion
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: 8
       DBSubnetGroupName: !Ref DBSubnetGroup
