@@ -236,9 +236,19 @@ Resources:
               EOF
               
               # Run the script and capture logs
-              python3.12 /tmp/setup_db.py > /var/log/db_setup.log 2>&1
-              echo "Database setup script completed. Check /var/log/db_setup.log for details"
+              #python3.12 /tmp/setup_db.py > /var/log/db_setup.log 2>&1
+              #echo "Database setup script completed. Check /var/log/db_setup.log for details"
               
+              # Run the script and capture logs
+              if python3.12 /tmp/setup_db.py > /var/log/db_setup.log 2>&1; then
+                  echo "Database setup completed successfully"
+                  /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource RssEC2InstanceTest --region ${AWS::Region}
+              else
+                  echo "Database setup failed"
+                  /opt/aws/bin/cfn-signal -e 1 --stack ${AWS::StackName} --resource RssEC2InstanceTest --region ${AWS::Region}
+              fi
+
+
               systemctl enable amazon-ssm-agent
               systemctl start amazon-ssm-agent
             - MasterSecretArn: !GetAtt RDSInstance.MasterUserSecret.SecretArn
@@ -250,7 +260,7 @@ Resources:
         - ResourceType: instance
           Tags:
           - Key: RemoteAccess
-            Value: "SSM Session is your friend NO NEED for SSH ;-)"
+            Value: "SSM Session Manager is your friend NO NEED for SSH ;-)"
           - Key: Role
             Value: "EC2 with Linux AMI for Secrets Manager Agent to simulate Hybrid"
   #Deploy the EC2 instance, attach an Instance Profile that allows the EC2 instance to call SSM
@@ -314,6 +324,10 @@ Resources:
   RssEC2InstanceTest:
     DependsOn: RssLaunchTemplate
     Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT10M
     Properties:
       LaunchTemplate: 
           LaunchTemplateId: !Ref RssLaunchTemplate
@@ -617,7 +631,7 @@ Resources:
       StorageEncrypted: true
       Tags:
         - Key: Name
-          Value: 'RDS instance for customers info'
+          Value: 'RDS instance for Mocktail info'
 
 
 Outputs:
@@ -625,12 +639,35 @@ Outputs:
     Description: "Stack name."
     Value: !Sub "${AWS::StackName}"
 
-  DefaultSecurityGroup:
-    Description: DefaultSecurityGroup Id
-    Value: !GetAtt RssMainVPC.DefaultSecurityGroup
+  #DB User ARN
+  DBUserSecretArn:
+    Description: ARN of the DB User Secret
+    Value: !Ref DBUserSecret
     Export:
-      Name: !Sub ${AWS::Region}-${AWS::StackName}-DefaultSecurityGroup
+      Name: !Sub ${AWS::Region}-${AWS::StackName}-DBUserSecretArn
   
+  # Database Endpoint
+  DatabaseEndpoint:
+    Description: RDS Database Endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+    Export:
+      Name: !Sub ${AWS::Region}-${AWS::StackName}-DatabaseEndpoint
+
+  # EC2 Instance
+  EC2InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref RssEC2InstanceTest
+    Export:
+      Name: !Sub ${AWS::Region}-${AWS::StackName}-EC2InstanceId
+    
+# IAM Role
+  EC2RoleArn:
+    Description: EC2 IAM Role ARN
+    Value: !GetAtt RssSSMRole.Arn
+    Export:
+      Name: !Sub ${AWS::Region}-${AWS::StackName}-EC2RoleArn
+
+  # Create VPC
   VPCId:
     Description: VPCId of VPC
     Value: !Ref RssMainVPC

@@ -73,8 +73,8 @@ The template accepts the following parameters:
    - Automatic database setup with sample mocktail data
       - Heathy ingredients: 🍋 🥥 🍓 🍊 🧊
       - Recipes: 🍸 🥤
-      - Marketing efforts: 💹 📊
-      - Target : 🎯
+      - Promotion results: 💹 📊
+      - Target Audience : 🎯
 
 
 5. **Secrets Management**
@@ -89,6 +89,15 @@ The template accepts the following parameters:
 
 ## Testing
 Please follow the [official documentation](https://docs.aws.amazon.com/secretsmanager/latest/userguide/secrets-manager-agent.html) and this [blog post](https://aws.amazon.com/blogs/security/how-to-use-the-aws-secrets-manager-agent/) to install AWS Secrets Manager agent.
+
+### Verify Database Deployment
+To confirm the database has been successfully deployed and configured, check the database setup log file on the EC2 instance:
+
+```bash
+cat /var/log/db_setup.log
+```
+
+This log file contains the complete database initialization process, including table creation, data insertion, and user setup verification. Look for **"Database setup completed successfully"** to confirm successful deployment.
 
 ### Agent installation
 Connect to your private EC2 instance using Session Manager.
@@ -114,11 +123,11 @@ Once connected, you can run the command below in your EC2 instance to download, 
       date
    ```
 
-### Use the agent to get the DB credentials
+### Use the agent to fetch the DB credentials
 Human are kept away from secrets; therefore programatically use the agent to obtain the secret value to connect to the DB. Please find the name of secret created for the DB instance deployed.
 
    ```bash
-   echo 'Fetch the DB managed credentials in Secrets Manager'
+   echo 'Fetch the DB managed credentials in AWS Secrets Manager'
    region='<YOUR-REGION>'
    aws secretsmanager list-secrets --query 'reverse(sort_by(SecretList[?DeletedDate==null], &CreatedDate))[*].[Name,ARN,CreatedDate]' --output table --region $region
    secret='<DB_USER_SECRET_NAME_ARN>'
@@ -129,10 +138,22 @@ Human are kept away from secrets; therefore programatically use the agent to obt
    echo 'The DB username is :'$username
    ```
 ### Connect to the DB created using the credentials stored in AWS Secrets Manager
-Get the database full endpoint name of the database created with this template, and set its value below.
-**Note:** To connect to the MySQL database, you need:
-- the username and password defined previously
-- the value of `ParamDBName`. By default `Campaign`.
+#### Get the database endpoint name
+Get the database full endpoint name, like `DATABASE_NAME.ABCD124563ED.REGION.rds.amazonaws.com` created with this template, and set its value below. To get DB endpoint full name, you can:
+1. Find it in the CloudFormation Outputs by copying the **Value** associated with the key `DatabaseEndpoint`
+2. Run the command below to find the DB endpoint
+```
+aws rds describe-db-instances --query 'DBInstances[].[DBInstanceIdentifier,Endpoint.Address,Endpoint.Port]' --output table --region $region
+```
+
+3. Use the console to find your DB instance endpoint full name.
+
+#### Connect to the MySQL database
+To connect to the databse, you need:
+- the `$username` and `$password` defined previously
+- the value of `ParamDBName`.
+
+Replace the parameters below with the right values and run those commands:
 
    ```
    dbendpoint='DATABASE_NAME.ABCD124563ED.REGION.rds.amazonaws.com'
