@@ -43,7 +43,7 @@ Parameters:
     Default: t3.micro
   DBEngineVersion:
     Type: String
-    Default: "8.0.42"
+    Default: "8.4.5"
   DBPort:
     Type: Number
     Description: 'Database port'

@@ -36,15 +36,11 @@ Parameters:
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
   DBEngineVersion:
     Type: String
-    Default: "8.0.42"
+    Default: "8.4.5"
   DBPort:
     Type: Number
     Description: 'Database port'
     Default: 3306
-  ParamDBName:
-    Type: String
-    Default: 'Campaign'
-    Description: 'Database name'
   DBInstanceClass:
     Type: String
     Default: 'db.t3.micro'  
