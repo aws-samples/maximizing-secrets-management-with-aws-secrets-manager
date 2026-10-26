@@ -220,11 +220,7 @@ The template can be deployed through:
 ## Cleanup
 
 Delete the CloudFormation stack when you are done to stop charges (EC2 instance, NAT gateway, RDS instance).
-Deleting the stack keeps a final RDS snapshot (`DeletionPolicy: Snapshot`); delete it manually to avoid storage charges:
-```bash
-aws rds describe-db-snapshots --snapshot-type manual --query 'DBSnapshots[].DBSnapshotIdentifier' --output text --region $region
-aws rds delete-db-snapshot --db-snapshot-identifier <SNAPSHOT_ID> --region $region
-```
+
 
 *Originally created for re:Invent 2024 - SEC324 - Code Talk & updated for the AWS Los Angeles Summit Sept 2025* 
 
