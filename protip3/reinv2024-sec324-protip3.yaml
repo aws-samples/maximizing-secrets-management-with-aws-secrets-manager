@@ -8,8 +8,7 @@ Description: >
 
   Sample CloudFormation template to set up the prerequisites for your AWS account : 
   new VPC, public subnets, SGs
-  NAT GW and internet GW to allow to download packages for Secrets Manager agent
-  AWS EC2 instance with access via AWS Systems Manager Session Manager.
+  NAT GW and internet GW to allow to download packages for AWS Workload Credentials Provider (formerly Secrets Manager Agent).
 
 Parameters:
   ParamProjectName:
@@ -40,7 +39,11 @@ Parameters:
     Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
   ParamEC2InstanceType:
     Type: String
-    Default: t3.micro
+    Default: t3.large
+    Description: >
+      EC2 instance type. t3.large (or larger) is needed to build the AWS Workload
+      Credentials Provider from source; t3.micro runs out of memory. Note: t3.large
+      is not Free Tier eligible and will incur charges while the stack is running.
   DBEngineVersion:
     Type: String
     Default: "8.4.5"
@@ -253,8 +256,8 @@ Resources:
           - Key: RemoteAccess
             Value: "SSM Session Manager is your friend NO NEED for SSH ;-)"
           - Key: Role
-            Value: "EC2 with Linux AMI for Secrets Manager Agent to simulate Hybrid"
-  #Deploy the EC2 instance, attach an Instance Profile that allows the EC2 instance to call SSM
+            Value: "EC2 with Linux AMI for AWS Workload Credentials Provider to simulate Hybrid"
+  # Deploy the EC2 instance, attach an Instance Profile that allows the EC2 instance to call SSM
   RssSSMRole:
     Type: AWS::IAM::Role
     Metadata:
@@ -552,7 +555,7 @@ Resources:
       FromPort: !Ref DBPort
       ToPort: !Ref DBPort
       DestinationSecurityGroupId: !Ref RDSSecurityGroup
-      Description: Allow Lambda to access RDS
+      Description: Allow Compute to access RDS
 
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -589,6 +592,8 @@ Resources:
   # RDS Instance
   RDSInstance:
     Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Metadata:
       cfn_nag:
         rules_to_suppress:
