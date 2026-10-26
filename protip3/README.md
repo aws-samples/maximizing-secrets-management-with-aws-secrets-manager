@@ -1,11 +1,11 @@
-# re:Invent 2024 - SEC324 - ProTip #3 - Secrets consumption using Secrets Manager agent
+# re:Invent 2024 - SEC324 - ProTip #3 - Secrets consumption using AWS Workload Credentials Provider (formerly Secrets Manager Agent)
 ![Secrets Manager](https://img.shields.io/badge/AWS-SecretsManager-orange)
 ![CloudFormation](https://img.shields.io/badge/CloudFormation-Templates-blue)
 ![AWS Security](https://img.shields.io/badge/AWS-Security-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Mocktail](https://img.shields.io/badge/🍹-Mocktail%20Demo-pink)
 
-This CloudFormation template sets up the necessary infrastructure prerequisites for an AWS environment with secure access patterns to demonstrate how AWS Secrets Manager agent can work.
+This CloudFormation template sets up the necessary infrastructure prerequisites for an AWS environment with secure access patterns to demonstrate how the AWS Workload Credentials Provider (formerly AWS Secrets Manager Agent) can work.
 
 ## Overview
 
@@ -36,8 +36,8 @@ The template accepts the following parameters:
 - **ParamSubnetBCidr**: CIDR for Private Subnet B (Default: 10.20.40.64/26)
 - **ParamSubnetCCidr**: CIDR for Public Subnet C (Default: 10.20.40.128/26)
 - **ParamLatestAmiId**: Latest Amazon Linux 2023 AMI ID (auto-retrieved from SSM Parameter Store)
-- **ParamEC2InstanceType**: EC2 instance type (Default: t3.micro)
-- **DBEngineVersion**: MySQL engine version (Default: "8.0.42")
+- **ParamEC2InstanceType**: EC2 instance type (Default: t3.large). ⚠️ Not Free Tier eligible and will incur EC2 charges while the stack is running; t3.micro is not sufficient to build the provider.
+- **DBEngineVersion**: MySQL engine version (Default: "8.4.5")
 - **DBPort**: Database port number (Default: 3306)
 - **ParamDBName**: Database name (Default: 'Campaign')
 - **DBInstanceClass**: Database instance type (Default: 'db.t3.micro')
@@ -88,7 +88,7 @@ The template accepts the following parameters:
 - Secure secrets management integration
 
 ## Testing
-Please follow the [official documentation](https://docs.aws.amazon.com/secretsmanager/latest/userguide/secrets-manager-agent.html) and this [blog post](https://aws.amazon.com/blogs/security/how-to-use-the-aws-secrets-manager-agent/) to install AWS Secrets Manager agent.
+Please follow the [official documentation](https://docs.aws.amazon.com/secretsmanager/latest/userguide/workload-credentials-provider.html) and this [blog post](...) to install the AWS Workload Credentials Provider (formerly AWS Secrets Manager Agent).
 
 ### Verify Database Deployment
 To confirm the database has been successfully deployed and configured, check the database setup log file on the EC2 instance:
@@ -99,21 +99,23 @@ cat /var/log/db_setup.log
 
 This log file contains the complete database initialization process, including table creation, data insertion, and user setup verification. Look for **"Database setup completed successfully"** to confirm successful deployment.
 
-### Agent installation
+⚠️ **Instance size:** Building the AWS Workload Credentials Provider from source requires more memory than a `t3.micro` provides; the build can freeze the instance. The template therefore defaults to `t3.large`, which is not Free Tier eligible and incurs charges while running. Delete the stack when you are done to stop costs.
+
+### Workload Credentials Provider installation
 Connect to your private EC2 instance using Session Manager.
-Once connected, you can run the command below in your EC2 instance to download, build, install the agent and configure the permission on the access token.
+Once connected, you can run the command below in your EC2 instance to download, build, install the provider and configure the permission on the access token.
 
    ```bash
       date
-      cd ~;git clone https://github.com/aws/aws-secretsmanager-agent
+      cd ~;cd ~;git clone --branch v3.1.1 https://github.com/aws/aws-workload-credentials-provider.git
       sudo yum -y groupinstall "Development Tools"
       date
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       . "$HOME/.cargo/env"
-      cd aws-secretsmanager-agent
+      cd aws-workload-credentials-provider
       pwd;date;
       cargo build --release
-      cd aws_secretsmanager_agent/configuration
+      cd aws_workload_credentials_provider_common/configuration
       sudo ./install
       pwd;date
       sudo cp /var/run/awssmatoken /tmp
@@ -123,8 +125,8 @@ Once connected, you can run the command below in your EC2 instance to download, 
       date
    ```
 
-### Use the agent to fetch the DB credentials
-Human are kept away from secrets; therefore programatically use the agent to obtain the secret value to connect to the DB. Please find the name of secret created for the DB instance deployed.
+### Use the Workload Credentials Provider to fetch the DB credentials
+Human are kept away from secrets; therefore programmatically use the provider to obtain the secret value to connect to the DB. Please find the name of secret created for the DB instance deployed.
 
    ```bash
    echo 'Fetch the DB managed credentials in AWS Secrets Manager'
@@ -182,7 +184,7 @@ MySQL [Campaign]> SELECT name, target_public, promotion_results
 
 ## Notes
 
-- **Humans are kept away from secrets** - Applications use AWS Secrets Manager agent to retrieve credentials
+- **Humans are kept away from secrets** - Applications use the AWS Workload Credentials Provider to retrieve credentials
 - The private EC2 instance is accessible via AWS Systems Manager Session Manager only
 - Database credentials should be managed securely through AWS Secrets Manager.
 
@@ -201,7 +203,7 @@ The EC2 instance comes pre-configured with:
 
 ## Best Practices Implemented
 
-- Use the Secrets Manager agent instead of direct API call
+- Use the Workload Credentials Provider instead of direct API calls
 - Keep humans away from secrets
 - Private hosting of sensitive resources
 - Use AWS Systems Manager Session Manager instead of opening SSH port over internet
@@ -215,7 +217,14 @@ The template can be deployed through:
 - AWS CLI
 - AWS CloudFormation API
 
+## Cleanup
 
+Delete the CloudFormation stack when you are done to stop charges (EC2 instance, NAT gateway, RDS instance).
+Deleting the stack keeps a final RDS snapshot (`DeletionPolicy: Snapshot`); delete it manually to avoid storage charges:
+```bash
+aws rds describe-db-snapshots --snapshot-type manual --query 'DBSnapshots[].DBSnapshotIdentifier' --output text --region $region
+aws rds delete-db-snapshot --db-snapshot-identifier <SNAPSHOT_ID> --region $region
+```
 
 *Originally created for re:Invent 2024 - SEC324 - Code Talk & updated for the AWS Los Angeles Summit Sept 2025* 
 
